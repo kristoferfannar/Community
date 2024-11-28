@@ -13,7 +13,7 @@ import torch.nn.functional as F
 MAX_GENERATIONS = 4
 POP_SIZE = 4
 HIDDEN_SIZE = 64
-TASK_FEATURE_SIZE = 5
+TASK_FEATURE_SIZE = 6
 PLAYER_STATE_SIZE = 9
 
 
@@ -45,31 +45,17 @@ class TaskScorerNN(nn.Module):
         return score
 
 
-class RestDecisionNN(nn.Module):
-    def __init__(self, input_size, hidden_size):
-        super(RestDecisionNN, self).__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, 1)  # Single output for rest score
 
-    def forward(self, features):
-        x = F.relu(self.fc1(features))
-        score = self.fc2(x)
-        return score
-
-
-def evaluate_fitness(task_model: nn.Module, rest_model: nn.Module):
+def evaluate_fitness(task_model: nn.Module):
     # for task in task_environment:
     # action = model(task.features, task.state)
-    result = run(task_model, rest_model)
+    result = run(task_model)
     # result = task_environment.run(action)  # Simulates environment behavior
     return result
 
 
 def crossover(parent1, parent2, is_task):
-    if is_task:
-        child = TaskScorerNN(TASK_FEATURE_SIZE, PLAYER_STATE_SIZE, HIDDEN_SIZE)
-    else:
-        child = RestDecisionNN(PLAYER_STATE_SIZE + 1, HIDDEN_SIZE)
+    child = TaskScorerNN(TASK_FEATURE_SIZE, PLAYER_STATE_SIZE, HIDDEN_SIZE)
 
     for param1, param2, child_param in zip(
         parent1.parameters(), parent2.parameters(), child.parameters()
@@ -111,11 +97,7 @@ class Task:
 
 
 population = [
-    (
-        TaskScorerNN(TASK_FEATURE_SIZE, PLAYER_STATE_SIZE, HIDDEN_SIZE),
-        # 1 is hardcoded
-        RestDecisionNN(PLAYER_STATE_SIZE + 1, HIDDEN_SIZE),
-    )
+        TaskScorerNN(TASK_FEATURE_SIZE, PLAYER_STATE_SIZE, HIDDEN_SIZE)
     for _ in range(POP_SIZE)
 ]
 
@@ -125,8 +107,8 @@ max_scores = []
 for generation in range(MAX_GENERATIONS):
     # Evaluate fitness
     fitness_scores = [
-        evaluate_fitness(task_model, rest_model)
-        for task_model, rest_model in population
+        evaluate_fitness(task_model)
+        for task_model in population
     ]
     avg_scores.append(np.mean(fitness_scores))
     max_scores.append(max(fitness_scores))
@@ -140,21 +122,17 @@ for generation in range(MAX_GENERATIONS):
     # for now, only create offspring from TaskScorerNN
     for _ in range(len(parents) // 2):
         parent1, parent2 = random.sample(parents, 2)
-        child_task = crossover(parent1[0], parent2[0], is_task=True)
-        child_rest = crossover(parent1[1], parent2[1], is_task=False)
+        child_task = crossover(parent1, parent2, is_task=True)
         mutate(child_task, 0.1, 0.05)
-        mutate(child_rest, 0.1, 0.05)
-        offspring.append((child_task, child_rest))
+        offspring.append(child_task)
 
         parent1, parent2 = random.sample(parents, 2)
-        child_task = crossover(parent1[0], parent2[0], is_task=True)
-        child_rest = crossover(parent1[1], parent2[1], is_task=False)
+        child_task = crossover(parent1, parent2, is_task=True)
         mutate(child_task, 0.1, 0.05)
-        mutate(child_rest, 0.1, 0.05)
-        offspring.append((child_task, child_rest))
+        offspring.append(child_task)
 
     # Replace population
-    [(mutate(ptask), mutate(prest)) for ptask, prest in parents]
+    [(mutate(ptask)) for ptask in parents]
     population = parents + offspring
     print(f"{len(population)} members")
 
