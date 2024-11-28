@@ -29,20 +29,9 @@ class TaskScorerNN(nn.Module):
         return score
 
 
-class RestDecisionNN(nn.Module):
-    def __init__(self, input_size, hidden_size):
-        super(RestDecisionNN, self).__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, 1)  # Single output for rest score
-
-    def forward(self, features):
-        x = F.relu(self.fc1(features))
-        score = self.fc2(x)
-        return score
-
 
 def decide_action(
-    task_features, player_state, task_scorer, rest_decider, k, max_tasks=100
+    task_features, player_state, task_scorer, k, max_tasks=100
 ):
     """
     Decides whether to perform a task or rest.
@@ -51,13 +40,14 @@ def decide_action(
         task_features (list): List of features for each task.
         player_state (object): Current state of the player.
         task_scorer (nn.Module): Neural network scoring tasks.
-        rest_decider (nn.Module): Neural network deciding rest.
         k (int): Number of top tasks to consider.
         max_tasks (int): Maximum number of tasks the model can handle.
 
     Returns:
         action (int): 0 to len(task_features)-1 for tasks, len(task_features) for rest.
     """
+    if len(task_features) == 0:
+        return []
     player_state_tensor = torch.tensor(player_state, dtype=torch.float32)
 
     task_vectors = [
@@ -69,43 +59,37 @@ def decide_action(
     )
 
     # Pad task scores to max_tasks with 0 if fewer tasks are available
-    if len(task_scores) <= max_tasks:
-        # 1 for rest
-        padding = torch.zeros(max_tasks - len(task_scores) + 1)
-        task_scores = torch.cat([task_scores, padding])
+    # if len(task_scores) <= max_tasks:
+    #     # 1 for rest
+    #     padding = torch.zeros(max_tasks - len(task_scores) + 1)
+    #     task_scores = torch.cat([task_scores, padding])
 
     # Select top k scores (valid tasks only)
     num_available_tasks = len(task_features)
+    # top_k_scores, top_k_indices = torch.topk(
+    #     task_scores[:num_available_tasks], min(k, num_available_tasks)
+    # )
+
     top_k_scores, top_k_indices = torch.topk(
-        task_scores[:num_available_tasks], min(k, num_available_tasks)
+        task_scores, min(k, num_available_tasks)
     )
-
-    # Aggregate features for rest decision
-    rest_input = torch.cat(
-        [
-            torch.mean(top_k_scores).unsqueeze(0),  # Mean score of top k tasks
-            torch.tensor(player_state),  # Add player and community features
-        ]
-    )
-
-    # Score rest action
-    rest_score = rest_decider(rest_input).item()
 
     # Combine task scores and rest score
-    combined_scores = task_scores.clone()
-    combined_scores[max_tasks] = rest_score  # Append rest score after valid tasks
     num_available_tasks = task_scores.size(0)
 
     # Find the action with the highest score
-    action = torch.argmax(combined_scores).item()
+    try:
+        action = torch.argmax(task_scores).item()
+    except Exception:
+        pass
 
     # If rest is chosen, return []
-    if action == max_tasks:
+    if action == 0:
         return []
     # Exclude rest and pick the argmax among the top k tasks
-    top_k_scores, top_k_indices = torch.topk(task_scores, k=k)
+    # top_k_scores, top_k_indices = torch.topk(task_scores, k=k)
     # Making sure we dont select any tasks already done
-    return [i for i in top_k_indices.tolist() if i < len(task_vectors)]
+    return [i for i in top_k_indices.tolist()]
 
 
 def count_tired_exhausted(community):
@@ -238,11 +222,26 @@ def create_tasks_feature_vector(player, community):
     tasks_lower_exhaust = count_lower_cost_players(player_cost_array, mat_exhaust)
     
     task_costs = []
+    # Rest is option 0
+    subvector = []
+    gain = 0
+    cost = rest_energy_gain(player.energy)
+    task_difficulty = 0
+    subvector.append(gain)
+    subvector.append(cost)
+    subvector.append(task_difficulty)
+    subvector.append(0)
+    subvector.append(0)
+    subvector.append(0)
+
     for i, task in enumerate(community.tasks):
         subvector = []
+        gain = 1
         task_difficulty = sum(task) / len(task)
+        cost = player_cost_array[i]
+        subvector.append(gain)
+        subvector.append(cost)
         subvector.append(task_difficulty)
-        subvector.append(player_cost_array[i])
         subvector.append(tasks_lower_raw[i] / len(community.members))
         subvector.append(tasks_lower_tire[i]/ len(community.members))
         subvector.append(tasks_lower_exhaust[i] / len(community.members))
@@ -305,7 +304,7 @@ def phaseIIpreferences(player, community, global_random):
         # Initialize
 
         # Hardcoded as 1, to be only the cost of the task - this can be changed.
-        task_feature_size = 5
+        task_feature_size = 6
         player_params_size = 9
         hidden_size = 64
 
@@ -317,13 +316,6 @@ def phaseIIpreferences(player, community, global_random):
             )
             player.taskNN.load_state_dict(
                 torch.load("task_weights.pth", weights_only=True)
-            )
-            player.restNN = RestDecisionNN(
-                # The 1 here is hardcoded because we get a mean of the task scores
-                input_size=player_params_size + 1, hidden_size=hidden_size
-            )
-            player.restNN.load_state_dict(
-                torch.load("rest_weights.pth", weights_only=True)
             )
 
             player.turn = 1
@@ -362,7 +354,6 @@ def phaseIIpreferences(player, community, global_random):
             task_features,
             player.params,
             player.taskNN,
-            player.restNN,
             k=min(3, len(community.tasks)),
             max_tasks=player.num_tasks,
         )
