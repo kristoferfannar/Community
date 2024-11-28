@@ -8,6 +8,7 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from tqdm import tqdm
 
 
 MAX_GENERATIONS = 4
@@ -104,11 +105,12 @@ population = [
 avg_scores = []
 max_scores = []
 
-for generation in range(MAX_GENERATIONS):
+for generation in tqdm(range(MAX_GENERATIONS)):
+    print(f"[*] Generation - {generation}")
     # Evaluate fitness
     fitness_scores = [
         evaluate_fitness(task_model)
-        for task_model in population
+        for task_model in tqdm(population)
     ]
     avg_scores.append(np.mean(fitness_scores))
     max_scores.append(max(fitness_scores))
