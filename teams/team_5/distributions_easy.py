@@ -23,11 +23,11 @@ def ability_distribution(num_abilities: int, seed, player_id, global_random) -> 
 def task_difficulty_distribution(num_abilities: int, seed, task_generation_id, global_random) -> list[int]:
     difficulties=[]
     for i in range(num_abilities):
-        rv =  skewnorm.rvs(a=-5,loc=5, scale=5)
+        rv =  skewnorm.rvs(a=-4,loc=5, scale=5)
         rv_int = math.floor(rv)
         difficulty = rv_int
-        if rv_int > 5:
-            difficulty = 5
+        if rv_int > 7:
+            difficulty = 7
         elif rv_int < 0:
             difficulty = 0
 

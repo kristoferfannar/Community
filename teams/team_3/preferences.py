@@ -1,21 +1,72 @@
 from community import Member, Community
 
 
-def community_statistics(community: Community):
-    num_members = len(community.members)
-    num_abilities = len(community.members[0].abilities)
-
-    total_energy = 0
-    avg_abilties = [0] * num_abilities
+def player_score(community: Community) -> list[int]:
+    members = {member.id: 0 for member in community.members}
 
     for member in community.members:
-        total_energy += member.energy
-        for i, ability in enumerate(member.abilities):
-            avg_abilties[i] += ability
+        for task in community.tasks:
+            cost = sum(
+                max(task[i] - member.abilities[i], 0)
+                for i in range(len(member.abilities))
+            )
+            members[member.id] += cost
 
-    avg_abilties = [ab / num_members for ab in avg_abilties]
-    avg_energy = total_energy / num_members
-    return avg_abilties, avg_energy
+    return sorted(members, key=members.get)
+
+
+def calculate_minimum_delta_individual(player: Member, community: Community):
+    num_abilities = len(player.abilities)
+
+    minimum_delta = float("inf")
+    best_task = -1
+
+    for task_index, task in enumerate(community.tasks):
+        cost = sum(max(task[i] - player.abilities[i], 0) for i in range(num_abilities))
+        waste = (
+            sum(max(player.abilities[i] - task[i], 0) for i in range(num_abilities))
+            * 0.5
+        )
+
+        if minimum_delta >= cost + waste:
+            minimum_delta = cost + waste
+            best_task = task_index
+
+    return (best_task, minimum_delta)
+
+
+# Delta = min(energy + waste)
+def calculate_minimum_delta_pair(
+    player: Member, best_partner: int, community: Community
+):
+    members = {member.id: member for member in community.members}
+    partner = members[best_partner]
+    num_abilities = len(player.abilities)
+
+    minimum_delta = float("inf")
+    best_task = 0
+
+    for task_index, task in enumerate(community.tasks):
+        pair_cost = (
+            sum(
+                max(task[i] - max(player.abilities[i], partner.abilities[i]), 0)
+                for i in range(num_abilities)
+            )
+            / 2
+        )
+        pair_waste = (
+            sum(
+                max(max(player.abilities[i], partner.abilities[i]) - task[i], 0)
+                for i in range(num_abilities)
+            )
+            * 0.5
+        )
+
+        if minimum_delta >= pair_cost + pair_waste:
+            minimum_delta = pair_cost + pair_waste
+            best_task = task_index
+
+    return (best_task, minimum_delta)
 
 
 def phaseIpreferences(player: Member, community: Community, global_random):
@@ -23,40 +74,31 @@ def phaseIpreferences(player: Member, community: Community, global_random):
     in the list has the first index task [index in the community.tasks list] and the second index as the partner id
     """
     list_choices = []
-    avg_abilities, avg_energy = community_statistics(community)
 
-    num_abilities = len(player.abilities)
+    if player.energy < 2:
+        return list_choices
 
-    # iterate over all tasks
-    for task_index, task in enumerate(community.tasks):
-        best_partner = None
-        min_energy_cost = float("inf")
+    members = player_score(community)
+    index = members.index(player.id)
 
-        solo_cost = sum(
-            max(task[i] - player.abilities[i], 0) for i in range(num_abilities)
-        )
+    best_partner = members[len(members) - 1 - index]
+    best_task, pair_delta = calculate_minimum_delta_pair(
+        player, best_partner, community
+    )
 
-        # find the best partner to minimize energy cost
-        for partner in community.members:
-            if partner.id == player.id or partner.energy < 2:
-                continue
+    player_cost = sum(
+        max(community.tasks[best_task][i] - player.abilities[i], 0)
+        for i in range(len(player.abilities))
+    )
+    player_waste = sum(
+        max(player.abilities[i] - community.tasks[best_task][i], 0)
+        for i in range(len(player.abilities))
+    )
 
-            # calculate potential energy cost with this partner
-            pair_cost = (
-                sum(
-                    max(task[i] - max(player.abilities[i], partner.abilities[i]), 0)
-                    for i in range(num_abilities)
-                )
-                / 2
-            )  # TODO figure out better potential energy function
+    player_delta = player_cost + player_waste
 
-            if pair_cost < min_energy_cost and pair_cost < solo_cost * 0.6:
-                min_energy_cost = pair_cost
-                best_partner = partner.id
-
-        # add this task-partner combo if it's beneficial
-        if best_partner is not None:
-            list_choices.append([task_index, best_partner])
+    if pair_delta < player_delta * 1.5:
+        list_choices.append([best_task, best_partner])
 
     return list_choices
 
@@ -65,17 +107,17 @@ def phaseIIpreferences(player, community, global_random):
     """Return a list of tasks for the particular player to do individually"""
     bids = []
     num_abilities = len(player.abilities)
+    best_task, _ = calculate_minimum_delta_individual(player, community)
 
-    # evaluate each task for solo completion
-    for i, task in enumerate(community.tasks):
-        energy_cost = sum(
-            max(task[j] - player.abilities[j], 0) for j in range(num_abilities)
-        )
+    if best_task == -1:
+        return []
 
-        if energy_cost < player.energy:
-            bids.append((i, energy_cost))
+    energy_cost = sum(
+        max(community.tasks[best_task][j] - player.abilities[j], 0)
+        for j in range(num_abilities)
+    )
 
-    bids.sort(key=lambda x: x[1])
-    bids = [bid[0] for bid in bids]
+    if energy_cost <= player.energy:
+        bids.append(best_task)
 
     return bids
