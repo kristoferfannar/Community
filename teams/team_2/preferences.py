@@ -344,7 +344,7 @@ def phaseIIpreferences(player, community, global_random):
             )
             try:
                 player.taskNN.load_state_dict(
-                    torch.load("best_weights.pth", weights_only=True)
+                    torch.load("task_weights.pth", weights_only=True)
                 )
             except RuntimeError:
                 pass
