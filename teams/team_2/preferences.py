@@ -7,12 +7,37 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+# class TaskScorerNN(nn.Module):
+#     def __init__(self, task_feature_size, player_state_size, hidden_size):
+#         super(TaskScorerNN, self).__init__()
+#         self.fc1 = nn.Linear(task_feature_size + player_state_size, hidden_size)
+#         self.fc2 = nn.Linear(hidden_size, hidden_size)
+#         self.fc3 = nn.Linear(hidden_size, 1)  # Outputs a single score for a task
+
+#     def forward(self, task_features, player_state):
+#         # Concatenate task features and player state
+#         combined = torch.cat(
+#             [
+#                 task_features if task_features.ndim > 1 else task_features.view(-1),
+#                 player_state,
+#             ],
+#             dim=-1,
+#         )
+#         x = F.relu(self.fc1(combined))
+#         x = F.relu(self.fc2(x))
+#         score = self.fc3(x)  # Outputs score
+#         return score
+
 class TaskScorerNN(nn.Module):
     def __init__(self, task_feature_size, player_state_size, hidden_size):
         super(TaskScorerNN, self).__init__()
-        self.fc1 = nn.Linear(task_feature_size + player_state_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, 1)  # Outputs a single score for a task
+        input_size = task_feature_size + player_state_size
+        
+        # Define layers with specified sizes
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size // 2)
+        self.fc3 = nn.Linear(hidden_size // 2, hidden_size // 4)
+        self.output_layer = nn.Linear(hidden_size // 4, 1)  # Outputs a single score for a task
 
     def forward(self, task_features, player_state):
         # Concatenate task features and player state
@@ -23,9 +48,12 @@ class TaskScorerNN(nn.Module):
             ],
             dim=-1,
         )
+        
+        # Apply layers with ReLU activation
         x = F.relu(self.fc1(combined))
         x = F.relu(self.fc2(x))
-        score = self.fc3(x)  # Outputs score
+        x = F.relu(self.fc3(x))
+        score = self.output_layer(x)  # Final score output
         return score
 
 
@@ -314,9 +342,12 @@ def phaseIIpreferences(player, community, global_random):
                 player_state_size=player_params_size,
                 hidden_size=hidden_size,
             )
-            player.taskNN.load_state_dict(
-                torch.load("task_weights.pth", weights_only=True)
-            )
+            try:
+                player.taskNN.load_state_dict(
+                    torch.load("best_weights.pth", weights_only=True)
+                )
+            except RuntimeError:
+                pass
 
             player.turn = 1
             player.num_tasks = len(community.members) * 2
