@@ -2,9 +2,8 @@ import subprocess
 from torch import nn, save
 
 
-def run(task_model: nn.Module, rest_model: nn.Module):
+def run(task_model: nn.Module):
     save(task_model.state_dict(), "task_weights.pth")
-    save(rest_model.state_dict(), "rest_weights.pth")
 
     result = subprocess.run(
         [
