@@ -329,7 +329,7 @@ def run_simulation(num_abilities: int, num_players: int, player_distribution, nu
 
     community = Community(num_abilities, num_players, player_distribution, members)
 
-    for _ in tqdm(range(num_turns)):
+    for _ in tqdm(range(num_turns), file=sys.stdout):
         available_players = {p for p in community.members if not p.incapacitated}
         if len(available_players) == 0:
             print("No active players")
