@@ -11,8 +11,8 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 
-MAX_GENERATIONS = 4
-POP_SIZE = 4
+MAX_GENERATIONS = 10
+POP_SIZE = 100
 HIDDEN_SIZE = 64
 TASK_FEATURE_SIZE = 6
 PLAYER_STATE_SIZE = 9
@@ -24,14 +24,39 @@ else:
     from teams.team_2.training.run import run
 
 
-class TaskScorerNN(nn.Module):
-    def __init__(self, task_feature_size, player_state_size, HIDDEN_SIZE):
-        super(TaskScorerNN, self).__init__()
-        self.fc1 = nn.Linear(task_feature_size + player_state_size, HIDDEN_SIZE)
-        self.fc2 = nn.Linear(HIDDEN_SIZE, HIDDEN_SIZE)
-        self.fc3 = nn.Linear(HIDDEN_SIZE, 1)  # Outputs a single score for a task
+# class TaskScorerNN(nn.Module):
+#     def __init__(self, task_feature_size, player_state_size, HIDDEN_SIZE):
+#         super(TaskScorerNN, self).__init__()
+#         self.fc1 = nn.Linear(task_feature_size + player_state_size, HIDDEN_SIZE)
+#         self.fc2 = nn.Linear(HIDDEN_SIZE, HIDDEN_SIZE)
+#         self.fc3 = nn.Linear(HIDDEN_SIZE, 1)  # Outputs a single score for a task
 
-    def forward(self, task_features: torch.Tensor, player_state: torch.Tensor):
+#     def forward(self, task_features: torch.Tensor, player_state: torch.Tensor):
+#         # Concatenate task features and player state
+#         combined = torch.cat(
+#             [
+#                 task_features if task_features.ndim > 1 else task_features.view(-1),
+#                 player_state,
+#             ],
+#             dim=-1,
+#         )
+#         x = F.relu(self.fc1(combined))
+#         x = F.relu(self.fc2(x))
+#         score = self.fc3(x)  # Outputs score
+#         return score
+
+class TaskScorerNN(nn.Module):
+    def __init__(self, task_feature_size, player_state_size, hidden_size):
+        super(TaskScorerNN, self).__init__()
+        input_size = task_feature_size + player_state_size
+        
+        # Define layers with specified sizes
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size // 2)
+        self.fc3 = nn.Linear(hidden_size // 2, hidden_size // 4)
+        self.output_layer = nn.Linear(hidden_size // 4, 1)  # Outputs a single score for a task
+
+    def forward(self, task_features, player_state):
         # Concatenate task features and player state
         combined = torch.cat(
             [
@@ -40,9 +65,12 @@ class TaskScorerNN(nn.Module):
             ],
             dim=-1,
         )
+        
+        # Apply layers with ReLU activation
         x = F.relu(self.fc1(combined))
         x = F.relu(self.fc2(x))
-        score = self.fc3(x)  # Outputs score
+        x = F.relu(self.fc3(x))
+        score = self.output_layer(x)  # Final score output
         return score
 
 
@@ -143,7 +171,8 @@ for generation in tqdm(range(MAX_GENERATIONS)):
 
 best_model = select_parents(population, fitness_scores)[0]
 
-torch.save(best_model, "best_weigths.pth")
+# torch.save(best_model, "best_weights.pth")
+torch.save(best_model.state_dict(), "best_weights.pth")
 print('best model weights saved in "best_weights.pth"')
 
 # Get the current working directory (runfolder)
