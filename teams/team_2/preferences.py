@@ -231,7 +231,7 @@ def create_tasks_feature_vector(player, community):
     # Rest is option 0
     subvector = []
     gain = 0
-    cost = rest_energy_gain(player.energy)
+    cost = -rest_energy_gain(player.energy)
     task_difficulty = 0
     subvector.append(gain)
     subvector.append(cost)
@@ -243,8 +243,8 @@ def create_tasks_feature_vector(player, community):
     for i, task in enumerate(community.tasks):
         subvector = []
         gain = 1
-        task_difficulty = sum(task) / len(task)
         cost = player_cost_array[i]
+        task_difficulty = sum(task) / len(task)
         subvector.append(gain)
         subvector.append(cost)
         subvector.append(task_difficulty)
