@@ -17,7 +17,7 @@ POP_SIZE = 4
 TURNS = 20
 CIVILIANS = 20
 HIDDEN_SIZE = 64
-TASK_FEATURE_SIZE = 5
+TASK_FEATURE_SIZE = 6
 PLAYER_STATE_SIZE = 9
 
 
@@ -31,15 +31,11 @@ def handle_signal(best_model):
     def catch_signal(sig, frame):
         print(f"\nCaught {signal.Signals(sig).name}, saving best model...")
 
-        best_score = evaluate_fitness(*best_model, turns=TURNS, civilians=CIVILIANS)
+        best_score = evaluate_fitness(best_model, turns=TURNS, civilians=CIVILIANS)
         print(f"best_model: {best_score} per turn per civilian")
         torch.save(
-            best_model[0].state_dict(),
-            f"best_task_score={str(round(best_score,3)).replace('.', ',')}.pth",
-        )
-        torch.save(
-            best_model[1].state_dict(),
-            f"best_rest_score={str(round(best_score, 3)).replace('.', ',')}.pth",
+            best_model.state_dict(),
+            f"best_score={str(round(best_score,3)).replace('.', ',')}.pth",
         )
         sys.exit(0)
 
@@ -47,13 +43,19 @@ def handle_signal(best_model):
 
 
 class TaskScorerNN(nn.Module):
-    def __init__(self, task_feature_size, player_state_size, HIDDEN_SIZE):
+    def __init__(self, task_feature_size, player_state_size, hidden_size):
         super(TaskScorerNN, self).__init__()
-        self.fc1 = nn.Linear(task_feature_size + player_state_size, HIDDEN_SIZE)
-        self.fc2 = nn.Linear(HIDDEN_SIZE, HIDDEN_SIZE)
-        self.fc3 = nn.Linear(HIDDEN_SIZE, 1)  # Outputs a single score for a task
+        input_size = task_feature_size + player_state_size
 
-    def forward(self, task_features: torch.Tensor, player_state: torch.Tensor):
+        # Define layers with specified sizes
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.fc2 = nn.Linear(hidden_size, hidden_size // 2)
+        self.fc3 = nn.Linear(hidden_size // 2, hidden_size // 4)
+        self.output_layer = nn.Linear(
+            hidden_size // 4, 1
+        )  # Outputs a single score for a task
+
+    def forward(self, task_features, player_state):
         # Concatenate task features and player state
         combined = torch.cat(
             [
@@ -62,36 +64,24 @@ class TaskScorerNN(nn.Module):
             ],
             dim=-1,
         )
+
+        # Apply layers with ReLU activation
         x = F.relu(self.fc1(combined))
         x = F.relu(self.fc2(x))
-        score = self.fc3(x)  # Outputs score
+        x = F.relu(self.fc3(x))
+        score = self.output_layer(x)  # Final score output
         return score
 
 
-class RestDecisionNN(nn.Module):
-    def __init__(self, input_size, hidden_size):
-        super(RestDecisionNN, self).__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, 1)  # Single output for rest score
-
-    def forward(self, features):
-        x = F.relu(self.fc1(features))
-        score = self.fc2(x)
-        return score
-
-
-def evaluate_fitness(task_model: nn.Module, rest_model: nn.Module, turns, civilians):
-    tasks = run(task_model, rest_model, turns, civilians)
+def evaluate_fitness(model: nn.Module, turns, civilians):
+    tasks = run(model, turns, civilians)
     score = tasks / turns / civilians
     print(f"score: {round(score, 3)}")
     return score
 
 
 def crossover(parent1, parent2, is_task):
-    if is_task:
-        child = TaskScorerNN(TASK_FEATURE_SIZE, PLAYER_STATE_SIZE, HIDDEN_SIZE)
-    else:
-        child = RestDecisionNN(PLAYER_STATE_SIZE + 1, HIDDEN_SIZE)
+    child = TaskScorerNN(TASK_FEATURE_SIZE, PLAYER_STATE_SIZE, HIDDEN_SIZE)
 
     for param1, param2, child_param in zip(
         parent1.parameters(), parent2.parameters(), child.parameters()
@@ -140,11 +130,7 @@ if __name__ == "__main__":
     offspring = []
     fitness_scores = []
     population = [
-        (
-            TaskScorerNN(TASK_FEATURE_SIZE, PLAYER_STATE_SIZE, HIDDEN_SIZE),
-            # 1 is hardcoded
-            RestDecisionNN(PLAYER_STATE_SIZE + 1, HIDDEN_SIZE),
-        )
+        (TaskScorerNN(TASK_FEATURE_SIZE, PLAYER_STATE_SIZE, HIDDEN_SIZE))
         for _ in range(POP_SIZE)
     ]
 
@@ -157,10 +143,10 @@ Generations: {MAX_GENERATIONS}
     )
 
     for generation in range(MAX_GENERATIONS):
+        print(f"[*] Generation - {generation}")
         # Evaluate fitness
         fitness_scores = [
-            evaluate_fitness(task_model, rest_model, TURNS, CIVILIANS)
-            for task_model, rest_model in population
+            evaluate_fitness(model, TURNS, CIVILIANS) for model in population
         ]
         avg_scores.append(np.mean(fitness_scores))
         max_scores.append(max(fitness_scores))
@@ -173,6 +159,7 @@ Generations: {MAX_GENERATIONS}
             )
         ]
         # save the current best population
+        print(f"saving model with score {max(fitness_scores)}")
         signal.signal(signal.SIGINT, handle_signal(spop[0]))
 
         # Select parents
@@ -183,34 +170,22 @@ Generations: {MAX_GENERATIONS}
         # for now, only create offspring from TaskScorerNN
         for _ in range(len(parents) // 2):
             parent1, parent2 = random.sample(parents, 2)
-            child_task = crossover(parent1[0], parent2[0], is_task=True)
-            child_rest = crossover(parent1[1], parent2[1], is_task=False)
+            child_task = crossover(parent1, parent2, is_task=True)
             mutate(child_task, 0.1, 0.05)
-            mutate(child_rest, 0.1, 0.05)
-            offspring.append((child_task, child_rest))
+            offspring.append(child_task)
 
             parent1, parent2 = random.sample(parents, 2)
-            child_task = crossover(parent1[0], parent2[0], is_task=True)
-            child_rest = crossover(parent1[1], parent2[1], is_task=False)
+            child_task = crossover(parent1, parent2, is_task=True)
             mutate(child_task, 0.1, 0.05)
-            mutate(child_rest, 0.1, 0.05)
-            offspring.append((child_task, child_rest))
+            offspring.append(child_task)
 
         # Replace population
-        [(mutate(ptask), mutate(prest)) for ptask, prest in parents]
+        [(mutate(ptask)) for ptask in parents]
         population = parents + offspring
-
-        print(
-            f"{generation}/{MAX_GENERATIONS}: fitness scores: {sorted(fitness_scores, reverse=True)[:3]}"
-        )
 
     best_model = select_parents(population, fitness_scores)[0]
 
-    torch.save(best_model[0].state_dict(), "best_task_weigths.pth")
-    torch.save(best_model[1].state_dict(), "best_rest_weigths.pth")
-    print(
-        'best model weights saved in "best_task_weights.pth" and "best_rest_weights.pth"'
-    )
+    torch.save(best_model.state_dict(), "best_weigths.pth")
 
     # Get the current working directory (runfolder)
     runfolder = os.getcwd()
