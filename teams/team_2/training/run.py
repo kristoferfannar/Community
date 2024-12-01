@@ -2,7 +2,7 @@ import subprocess
 from torch import nn, save
 
 
-def run(task_model: nn.Module):
+def run(task_model: nn.Module, turns, civilians):
     save(task_model.state_dict(), "task_weights.pth")
 
     result = subprocess.run(
@@ -10,11 +10,11 @@ def run(task_model: nn.Module):
             "python",
             "community.py",
             "--num_members",
-            "10",
+            f"{civilians}",
             "--g2",
-            "10",
+            f"{civilians}",
             "--num_turns",
-            "20",
+            f"{turns}",
         ],
         capture_output=True,
         text=True,
@@ -28,7 +28,6 @@ def run(task_model: nn.Module):
         searchstr = "Total tasks completed: "
         if line.startswith(searchstr):
             completed_tasks = int(line[len(searchstr) :])
-            print(f"result: {completed_tasks}")
             return completed_tasks
 
     raise Exception("something broke")
