@@ -258,42 +258,7 @@ def phaseIpreferences(player, community, global_random):
     """Return a list of task index and the partner id for the particular player. The output format should be a list of lists such that each element
     in the list has the first index task [index in the community.tasks list] and the second index as the partner id
     """
-    list_choices = []
-    if player.energy < 0:
-        return list_choices
-    # num_members = len(community.members)
-    # partner_id = num_members - player.id - 1
-    # list_choices.append([0, partner_id])
-    # if len(community.tasks) > 1:
-    #     list_choices.append([1, partner_id])
-    # list_choices.append([0, min(partner_id + 1, num_members - 1)])
-
-    cost_matrix = create_cost_matrix(player, community)
-
-    best_partner_for_task = [
-        (task_id, best_partner(cost_matrix[task_id]), cost_matrix[task_id].min())
-        for task_id in range(len(cost_matrix))
-    ]
-    best_partner_for_task.sort(key=lambda x: x[2])
-
-    requested_partners = []
-
-    # to incentivize players to not request pairing up with the best member in the community,
-    # we require that they at least request 5 different partners
-    PARTNER_REQUEST_AMOUNT = 5
-    potential_partners = set()
-    curr_idx = 0
-    while len(potential_partners) < PARTNER_REQUEST_AMOUNT and curr_idx < len(
-        best_partner_for_task
-    ):
-        task_id, partner_id, cost = best_partner_for_task[curr_idx]
-        if partner_id not in potential_partners:
-            requested_partners.append([task_id, partner_id])
-            potential_partners.add(partner_id)
-
-        curr_idx += 1
-
-    return requested_partners
+    return []
 
 
 def phaseIIpreferences(player, community, global_random):
