@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 import traceback
+import sys
 
 import torch
 import torch.nn as nn
@@ -307,13 +308,19 @@ def phaseIIpreferences(player, community, global_random):
         hidden_size = 64
 
         if not hasattr(player, "turn"):
+            prefix = ""
+            for arg in sys.argv:
+                if arg.startswith("prefix="):
+                    prefix = arg[len("prefix=") :] + "_"
+                    break
+
             player.taskNN = TaskScorerNN(
                 task_feature_size=task_feature_size,
                 player_state_size=player_params_size,
                 hidden_size=hidden_size,
             )
             player.taskNN.load_state_dict(
-                torch.load("task_weights.pth", weights_only=True)
+                torch.load(prefix + "task_weights.pth", weights_only=True)
             )
             player.restNN = RestDecisionNN(
                 # The 1 here is hardcoded because we get a mean of the task scores
@@ -321,7 +328,7 @@ def phaseIIpreferences(player, community, global_random):
                 hidden_size=hidden_size,
             )
             player.restNN.load_state_dict(
-                torch.load("rest_weights.pth", weights_only=True)
+                torch.load(prefix + "rest_weights.pth", weights_only=True)
             )
 
             player.turn = 1

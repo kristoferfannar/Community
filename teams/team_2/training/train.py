@@ -4,6 +4,8 @@ import random
 import os
 import signal
 import sys
+from functools import partial
+import multiprocessing
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -13,7 +15,7 @@ import torch.nn.functional as F
 
 
 MAX_GENERATIONS = 4
-POP_SIZE = 4
+POP_SIZE = 48
 TURNS = 20
 CIVILIANS = 20
 HIDDEN_SIZE = 64
@@ -21,7 +23,7 @@ TASK_FEATURE_SIZE = 5
 PLAYER_STATE_SIZE = 9
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" or __name__ == "__mp_main__":
     from run import run
 else:
     from teams.team_2.training.run import run
@@ -158,10 +160,12 @@ Generations: {MAX_GENERATIONS}
 
     for generation in range(MAX_GENERATIONS):
         # Evaluate fitness
-        fitness_scores = [
-            evaluate_fitness(task_model, rest_model, TURNS, CIVILIANS)
-            for task_model, rest_model in population
-        ]
+
+        fitness_scores = []
+        with multiprocessing.Pool(multiprocessing.cpu_count()) as pool:
+            worker_func = partial(evaluate_fitness, turns=TURNS, civilians=CIVILIANS)
+            fitness_scores = pool.starmap(worker_func, population)
+
         avg_scores.append(np.mean(fitness_scores))
         max_scores.append(max(fitness_scores))
 

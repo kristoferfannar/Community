@@ -593,7 +593,7 @@ if __name__ == "__main__":
     for i in range(1, 11):
         parser.add_argument(f'--g{i}', type=int, default=0, help=f'Number of players in group {i}')
 
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
     global_random.seed(args.seed)
     num_members = args.num_members
     num_turns = args.num_turns
