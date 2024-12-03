@@ -1,5 +1,7 @@
 import numpy as np
 from scipy.optimize import linear_sum_assignment
+from scipy.spatial.distance import cosine
+
 import traceback
 import sys
 
@@ -15,6 +17,21 @@ for args in sys.argv:
         training = True
         break
 
+class PartnershipNN(nn.Module):
+    def __init__(self, input_size, hidden_size=128, output_size=1):
+        super(PartnershipNN, self).__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(hidden_size, hidden_size // 2)
+        self.fc3 = nn.Linear(hidden_size // 2, output_size)
+    
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.fc2(x)
+        x = self.relu(x)
+        x = self.fc3(x)
+        return x
 
 class TaskScorerNN(nn.Module):
     def __init__(self, task_feature_size, player_state_size, hidden_size):
@@ -261,6 +278,91 @@ def best_partner(task: np.ndarray):
 
 
 
+# def create_task_partner_features(player, community):
+#     """
+#     Create a matrix containing features for each (task, partner) pairing:
+#     cost, cosine similarity, and difficulty.
+#     """
+#     features_matrix = []
+#     for task in community.tasks:
+#         task_features = []
+#         for member in community.members:
+#             # Cost
+#             # Compute the element-wise maximum of abilities
+#             max_abilities = [max(i, j) for i, j in zip(player.abilities, member.abilities)]
+#             # Compute the delta and absolute values
+#             delta = [abs(max_val - req) for max_val, req in zip(max_abilities, task)]
+#             # Total cost is the sum of deltas
+#             total_cost = sum(delta)
+
+#             # Cosine Similarity
+#             # Combine abilities and task requirements for the cosine similarity
+#             combined_abilities = np.array(max_abilities)
+#             task_vector = np.array(task)
+#             # Avoid division by zero for trivial tasks
+#             if np.linalg.norm(combined_abilities) == 0 or np.linalg.norm(task_vector) == 0:
+#                 cosine_sim = 0
+#             else:
+#                 cosine_sim = 1 - cosine(combined_abilities, task_vector)
+
+#             # Difficulty
+#             # Difficulty is the sum of task requirements
+#             task_difficulty = sum(task) / len(task)
+
+#             # Append the features
+#             task_features.append([total_cost, cosine_sim, task_difficulty])
+        
+#         features_matrix.append(task_features)
+    
+#     return np.array(features_matrix)
+
+
+def create_task_partner_features(player, community):
+    """
+    Create a feature matrix for PartnershipNN.
+    Each row includes task features, player parameters, and partner parameters.
+    """
+    features_matrix = []
+    tired, exh = count_tired_exhausted(community)
+    player.params = get_player_params(player, community, player.turn, player.num_tasks, tired, exh)
+    player_params = np.array(player.params)  # Player's parameters (same for all rows)
+
+    for task in community.tasks:
+        task_features = []  # Features for all partners for a single task
+
+        for member in community.members:
+            # --- Task Features ---
+            # Compute cost
+            max_abilities = [max(i, j) for i, j in zip(player.abilities, member.abilities)]
+            delta = [abs(max_val - req) for max_val, req in zip(max_abilities, task)]
+            total_cost = sum(delta)
+
+            # Compute cosine similarity
+            combined_abilities = np.array(max_abilities)
+            task_vector = np.array(task)
+            if np.linalg.norm(combined_abilities) == 0 or np.linalg.norm(task_vector) == 0:
+                cosine_sim = 0
+            else:
+                cosine_sim = 1 - cosine(combined_abilities, task_vector)
+
+            # Compute difficulty
+            task_difficulty = sum(task)
+
+            # --- Partner Parameters ---
+            member.params = get_player_params(member, community, player.turn, player.num_tasks, tired, exh)
+            partner_params = np.array(member.params)  # Partner-specific parameters
+
+            # Combine features into a single row
+            task_features.append(
+                np.concatenate(
+                    ([total_cost, cosine_sim, task_difficulty], player_params, partner_params)
+                )
+            )
+
+        features_matrix.append(task_features)
+
+    return np.array(features_matrix)
+
 
 def create_tasks_feature_vector(player, community):
 
@@ -319,6 +421,44 @@ def create_tasks_feature_vector(player, community):
     return task_costs
 
 
+def create_partnership_input(player, partner, task_features, task_id):
+    player_features = np.array(player.params)
+    partner_features = np.array(partner.params)
+    task_features = np.array(task_features[task_id])
+    return np.concatenate([player_features, partner_features, task_features])
+
+
+PARTNER_REQUEST_AMOUNT = 5
+PARTNERSHIP_TASK_FEATURE_SIZE = 3
+P1_HIDDEN_SIZE = 64
+
+def select_top_k_partnerships(score_matrix, k):
+    # Flatten the matrix into (task, partner, score) tuples
+    flattened = [
+        (task_idx, partner_idx, score)
+        for task_idx, row in enumerate(score_matrix)
+        for partner_idx, score in enumerate(row)
+    ]
+
+    # Sort the tuples by score in descending order
+    sorted_scores = sorted(flattened, key=lambda x: x[2], reverse=True)
+
+    # Initialize tracking sets
+    assigned_tasks = set()
+    assigned_partners = set()
+    selected_partnerships = []
+
+    # Select top k partnerships
+    for task, partner, score in sorted_scores:
+        if task not in assigned_tasks and partner not in assigned_partners:
+            selected_partnerships.append((task, partner))
+            assigned_tasks.add(task)
+            assigned_partners.add(partner)
+        if len(selected_partnerships) == k:
+            break
+
+    return selected_partnerships
+
 def phaseIpreferences(player, community, global_random):
     """Return a list of task index and the partner id for the particular player. The output format should be a list of lists such that each element
     in the list has the first index task [index in the community.tasks list] and the second index as the partner id
@@ -328,39 +468,126 @@ def phaseIpreferences(player, community, global_random):
         return []
 
     list_choices = []
-    if player.energy < 0:
-        return list_choices
+    # if player.energy < 0:
+    #     return list_choices
 
-    cost_matrix = create_cost_matrix(player, community)
+    # cost_matrix = create_cost_matrix(player, community)
 
-    best_partner_for_task = [
-        (task_id, best_partner(cost_matrix[task_id]), cost_matrix[task_id].min())
-        for task_id in range(len(cost_matrix))
-    ]
-    best_partner_for_task.sort(key=lambda x: x[2])
 
-    requested_partners = []
+    if not hasattr(player, "turn"):
+        player.turn = 1
+        player.num_tasks = len(community.members) * 2
+        for member in community.members:
+            member.num_tasks = len(community.members) * 2
+        # Initialize paths and model prefixes
+        prefix = "teams/team_2/"
+        for arg in sys.argv:
+            if arg.startswith("prefix="):
+                prefix += "models/" + arg[len("prefix="):] + "_"
+                break
 
-    # to incentivize players to not request pairing up with the best member in the community,
-    # we require that they at least request 5 different partners
-    PARTNER_REQUEST_AMOUNT = 5
-    potential_partners = set()
-    curr_idx = 0
-    while len(potential_partners) < PARTNER_REQUEST_AMOUNT and curr_idx < len(
-        best_partner_for_task
-    ):
-        task_id, partner_id, cost = best_partner_for_task[curr_idx]
-        if partner_id not in potential_partners:
-            requested_partners.append([task_id, partner_id])
-            potential_partners.add(partner_id)
+        # Load task and rest NNs
+        player.taskNN = TaskScorerNN(
+            task_feature_size=TASK_FEATURE_SIZE,
+            player_state_size=PLAYER_PARAM_SIZE,
+            hidden_size=HIDDEN_SIZE,
+        )
+        player.taskNN.load_state_dict(
+            torch.load(prefix + "task_weights.pth", weights_only=True)
+        )
 
-        curr_idx += 1
+        player.restNN = RestDecisionNN(
+            input_size=PLAYER_PARAM_SIZE + 1,  # Mean of task scores
+            hidden_size=HIDDEN_SIZE,
+        )
+        player.restNN.load_state_dict(
+            torch.load(prefix + "rest_weights.pth", weights_only=True)
+        )
 
-    return requested_partners
+        # Initialize PartnershipNN
+        player.partnershipNN = PartnershipNN(
+            input_size=PLAYER_PARAM_SIZE * 2 + PARTNERSHIP_TASK_FEATURE_SIZE,
+            hidden_size=P1_HIDDEN_SIZE,
+        )
+        player.partnershipNN.load_state_dict(
+            torch.load(prefix + "partnership_weights.pth", weights_only=True)
+        )
+
+        # Initialize other parameters
+        
+    else:
+        player.turn += 1
+
+    # Update player parameters
+    tired, exh = count_tired_exhausted(community)
+    features_matrix = create_task_partner_features(player, community)
+    flat_features = features_matrix.reshape(-1, features_matrix.shape[-1])
+    scores = player.partnershipNN(torch.tensor(flat_features, dtype=torch.float32))
+    score_matrix = scores.detach().numpy().reshape(len(community.tasks), len(community.members))
+
+    return select_top_k_partnerships(score_matrix, PARTNER_REQUEST_AMOUNT)
+    # player.params = get_player_params(player, community, player.turn, player.num_tasks, tired, exh)
+    # task_features = create_tasks_feature_vector(player, community)
+
+    # partnership_scores = []
+    # for task_id, task in enumerate(community.tasks):
+    #     for partner_id, partner in enumerate(community.members):
+    #         input_vector = create_partnership_input(player, partner, task_features, task_id)
+    #         input_tensor = torch.tensor(input_vector, dtype=torch.float32)
+    #         score = player.partnershipNN(input_tensor).item()
+    #         partnership_scores.append((task_id, partner_id, score))
+
+    # partnership_scores.sort(key=lambda x: -x[2])  # Higher scores first
+
+    # selected_partnerships = partnership_scores[:PARTNER_REQUEST_AMOUNT]
+    # for task_id, partner_id, score in selected_partnerships:
+    #     list_choices.append([task_id, partner_id])
+
+    # best_partner_for_task = [
+    #     (task_id, best_partner(cost_matrix[task_id]), cost_matrix[task_id].min())
+    #     for task_id in range(len(cost_matrix))
+    # ]
+    # best_partner_for_task.sort(key=lambda x: x[2])
+
+    # requested_partners = []
+
+    # # to incentivize players to not request pairing up with the best member in the community,
+    # # we require that they at least request 5 different partners
+    
+    # potential_partners = set()
+    # curr_idx = 0
+    # while len(potential_partners) < PARTNER_REQUEST_AMOUNT and curr_idx < len(
+    #     best_partner_for_task
+    # ):
+    #     task_id, partner_id, cost = best_partner_for_task[curr_idx]
+    #     if partner_id not in potential_partners:
+    #         requested_partners.append([task_id, partner_id])
+    #         potential_partners.add(partner_id)
+
+    #     curr_idx += 1
+
+    # return requested_partners
 
 TASK_FEATURE_SIZE = 7
 PLAYER_PARAM_SIZE = 11
 HIDDEN_SIZE = 40
+
+def get_player_params(player, community, turn, num_tasks, tired, exh):
+    
+    return [
+                len(community.members),
+                len(community.tasks) / num_tasks,
+                (1 - len(community.tasks) / num_tasks) ** 2,
+                len(community.members) / (len(community.tasks) + 1),
+                turn,
+                player.energy,
+                min(player.energy, 0) ** 2,
+                player.energy**3,
+                rest_energy_gain(player.energy),  # Energy to gain from resting
+                tired,  # Num tired
+                exh,  # Num exhausted
+            ]
+
 
 def phaseIIpreferences(player, community, global_random):
     """Return a list of tasks for the particular player to do individually"""
@@ -372,63 +599,38 @@ def phaseIIpreferences(player, community, global_random):
         # Hardcoded as 1, to be only the cost of the task - this can be changed.
         
 
-        if not hasattr(player, "turn"):
-            prefix = "teams/team_2/"
-            for arg in sys.argv:
-                if arg.startswith("prefix="):
-                    prefix += "models/" + arg[len("prefix=") :] + "_"
-                    break
+        # if not hasattr(player, "turn"):
+        #     prefix = "teams/team_2/"
+        #     for arg in sys.argv:
+        #         if arg.startswith("prefix="):
+        #             prefix += "models/" + arg[len("prefix=") :] + "_"
+        #             break
 
-            player.taskNN = TaskScorerNN(
-                task_feature_size=TASK_FEATURE_SIZE,
-                player_state_size=PLAYER_PARAM_SIZE,
-                hidden_size=HIDDEN_SIZE,
-            )
-            player.taskNN.load_state_dict(
-                torch.load(prefix + "task_weights.pth", weights_only=True)
-            )
-            player.restNN = RestDecisionNN(
-                # The 1 here is hardcoded because we get a mean of the task scores
-                input_size=PLAYER_PARAM_SIZE + 1,
-                hidden_size=HIDDEN_SIZE,
-            )
-            player.restNN.load_state_dict(
-                torch.load(prefix + "rest_weights.pth", weights_only=True)
-            )
+        #     player.taskNN = TaskScorerNN(
+        #         task_feature_size=TASK_FEATURE_SIZE,
+        #         player_state_size=PLAYER_PARAM_SIZE,
+        #         hidden_size=HIDDEN_SIZE,
+        #     )
+        #     player.taskNN.load_state_dict(
+        #         torch.load(prefix + "task_weights.pth", weights_only=True)
+        #     )
+        #     player.restNN = RestDecisionNN(
+        #         # The 1 here is hardcoded because we get a mean of the task scores
+        #         input_size=PLAYER_PARAM_SIZE + 1,
+        #         hidden_size=HIDDEN_SIZE,
+        #     )
+        #     player.restNN.load_state_dict(
+        #         torch.load(prefix + "rest_weights.pth", weights_only=True)
+        #     )
 
-            player.turn = 1
-            player.num_tasks = len(community.members) * 2
+        #     player.turn = 1
+        #     player.num_tasks = len(community.members) * 2
             # This should contain the params for decision, such as player.energy, etc
-            player.params = [
-                len(community.members),
-                len(community.tasks) / player.num_tasks,
-                (1 - len(community.tasks) / player.num_tasks) ** 2,
-                len(community.members) / (len(community.tasks) + 1),
-                player.turn,
-                player.energy,
-                min(player.energy, 0) ** 2,
-                player.energy**3,
-                0,  # Energy to gain from resting
-                0,  # Num tired
-                0,  # Num exhausted
-            ]
-        else:
-            player.turn += 1
-            tired, exh = count_tired_exhausted(community)
-            player.params = [
-                len(community.members),
-                len(community.tasks) / player.num_tasks,
-                (1 - len(community.tasks) / player.num_tasks) ** 2,
-                len(community.members) / (len(community.tasks) + 1),
-                player.turn,
-                player.energy,
-                min(player.energy, 0) ** 2,
-                player.energy**3,
-                rest_energy_gain(player.energy),
-                tired,
-                exh,
-            ]
+        # else:
+        #     player.turn += 1
 
+        tired, exh = count_tired_exhausted(community)
+        player.params = get_player_params(player, community, player.turn, player.num_tasks, tired, exh)
         task_features = create_tasks_feature_vector(player, community)
         action = decide_action(
             task_features,
